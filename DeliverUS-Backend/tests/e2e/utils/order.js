@@ -86,9 +86,4 @@ async function checkOrderEqualsOrderData (createdOrder, orderData) {
   }
 }
 
-const getOrderList = async (owner, restaurant) => {
-  const orders = (await request(await getApp()).get(`/restaurants/${restaurant.id}/orders`).set('Authorization', `Bearer ${owner.token}`).send()).body
-  return orders
-}
-
-export { getNewOrderData, getFirstProductFromRestaurant, getProductAlreadyOrdered, getNewOrderDataWithUnavailableProduct, createOrder, computeOrderPrice, checkOrderEqualsOrderData, getOrderList }
+export { getNewOrderData, getFirstProductFromRestaurant, getProductAlreadyOrdered, getNewOrderDataWithUnavailableProduct, createOrder, computeOrderPrice, checkOrderEqualsOrderData }

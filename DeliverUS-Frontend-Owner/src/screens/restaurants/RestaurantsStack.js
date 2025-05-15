@@ -6,10 +6,11 @@ import EditProductScreen from './EditProductScreen'
 import EditRestaurantScreen from './EditRestaurantScreen'
 import RestaurantDetailScreen from './RestaurantDetailScreen'
 import RestaurantsScreen from './RestaurantsScreen'
-
+import OrdersDetailsScreen from './OrdersDetailsScreen'
+import CreateReviewsScreena from './CreateReviewsScreen'
 const Stack = createNativeStackNavigator()
 
-export default function RestaurantsStack () {
+export default function RestaurantsStack() {
   return (
     <Stack.Navigator>
       <Stack.Screen
@@ -30,19 +31,26 @@ export default function RestaurantsStack () {
         options={{
           title: 'Create Restaurant'
         }} />
-        <Stack.Screen
+      <Stack.Screen
         name='CreateProductScreen'
         component={CreateProductScreen}
         options={{
           title: 'Create Product'
         }} />
-        <Stack.Screen
+      <Stack.Screen
         name='EditRestaurantScreen'
         component={EditRestaurantScreen}
         options={{
           title: 'Edit Restaurant'
         }} />
-        <Stack.Screen
+      <Stack.Screen
+        name='OrdersDetailsScreen'
+        component={OrdersDetailsScreen}
+        options={{
+          title: 'Orders'
+        }} />
+
+      <Stack.Screen
         name='EditProductScreen'
         component={EditProductScreen}
         options={{

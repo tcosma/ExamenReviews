@@ -1,8 +1,7 @@
 // eslint-disable-next-line no-unused-vars
-import { Order, Product, Restaurant, User, sequelizeSession } from '../models/models.js'
+import { Order, Product, Restaurant, RestaurantCategory, User, sequelizeSession } from '../models/models.js'
 import moment from 'moment'
 import { Op } from 'sequelize'
-
 const generateFilterWhereClauses = function (req) {
   const filterWhereClauses = []
   if (req.query.status) {
@@ -66,7 +65,6 @@ const generateFilterWhereClauses = function (req) {
 }
 
 // Returns :restaurantId orders
-// TODO: [Octubre 2024]
 const indexRestaurant = async function (req, res) {
   const whereClauses = generateFilterWhereClauses(req)
   whereClauses.push({
@@ -75,18 +73,10 @@ const indexRestaurant = async function (req, res) {
   try {
     const orders = await Order.findAll({
       where: whereClauses,
-      include: [{
+      include: {
         model: Product,
         as: 'products'
-      }, {
-        model: User,
-        as: 'user'
       }
-      ],
-      order: [['deliveredAt', 'ASC'],
-        ['sentAt', 'ASC'],
-        ['startedAt', 'ASC'],
-        ['createdAt', 'ASC']]
     })
     res.json(orders)
   } catch (err) {
@@ -98,9 +88,27 @@ const indexRestaurant = async function (req, res) {
 // Orders have to include products that belongs to each order and restaurant details
 // sort them by createdAt date, desc.
 const indexCustomer = async function (req, res) {
-  res.status(500).send('This function is to be implemented')
+  try {
+    const orders = await Order.findAll({
+      where: {
+        userId: req.user.id
+      },
+      include: [{
+        model: Product,
+        as: 'products'
+      },
+      {
+        model: Restaurant,
+        as: 'restaurant',
+        attributes: ['name', 'description', 'address', 'postalCode', 'url', 'shippingCosts', 'averageServiceMinutes', 'email', 'phone', 'logo', 'heroImage', 'status', 'restaurantCategoryId']
+      }],
+      order: [['createdAt', 'DESC']]
+    })
+    res.json(orders)
+  } catch (err) {
+    res.status(500).send(err)
+  }
 }
-
 // TODO: Implement the create function that receives a new order and stores it in the database.
 // Take into account that:
 // 1. If price is greater than 10€, shipping costs have to be 0.
@@ -109,8 +117,43 @@ const indexCustomer = async function (req, res) {
 // 4. If an exception is raised, catch it and rollback the transaction
 
 const create = async (req, res) => {
-  // Use sequelizeSession to start a transaction
-  res.status(500).send('This function is to be implemented')
+  const transaction = await sequelizeSession.transaction()
+  const newOrder = Order.build(req.build)
+  try {
+    let totalPrice = 0
+    for (const p of req.body.products) {
+      const product = await Product.findByPk(p.productId)
+      totalPrice += p.quantity * product.price
+    }
+
+    newOrder.price = totalPrice
+    if (newOrder.price <= 10) {
+      const restaurant = await Restaurant.findByPk(req.body.restaurantId)
+      newOrder.shippingCosts = restaurant.shippingCosts
+    } else {
+      newOrder.shippingCosts = 0
+    }
+    newOrder.price += newOrder.shippingCosts
+    newOrder.createdAt = new Date()
+    newOrder.userId = req.user.id
+    newOrder.address = req.body.address
+    newOrder.restaurantId = req.body.restaurantId
+    newOrder.sentAt = req.body.sentAt
+    newOrder.startedAt = req.body.startedAt
+    newOrder.deliveredAt = req.body.deliveredAt
+
+    const order = await newOrder.save({ include: 'products', transaction })
+    for (const p of req.body.products) {
+      const product = await Product.findByPk(p.productId)
+      await order.addProduct(product, { through: { quantity: p.quantity, unityPrice: product.price }, transaction })
+    }
+    await transaction.commit()
+    const final = await Order.findByPk(order.id, { include: 'products' })
+    res.json(final.dataValues)
+  } catch (err) {
+    res.status(500).send(err)
+    await transaction.rollback()
+  }
 }
 
 // TODO: Implement the update function that receives a modified order and persists it in the database.
@@ -120,77 +163,62 @@ const create = async (req, res) => {
 // 3. In order to save the updated order and updated products, start a transaction, update the order, remove the old related OrderProducts and store the new product lines, and commit the transaction
 // 4. If an exception is raised, catch it and rollback the transaction
 const update = async function (req, res) {
-  // Use sequelizeSession to start a transaction
-  res.status(500).send('This function is to be implemented')
-}
-
-// TODO: Implement the destroy function that receives an orderId as path param and removes the associated order from the database.
-// Take into account that:
-// 1. The migration include the "ON DELETE CASCADE" directive so OrderProducts related to this order will be automatically removed.
-const destroy = async function (req, res) {
-  res.status(500).send('This function is to be implemented')
-}
-// TODO: [Octubre 2024]
-const forwardOrder = async function (req, res) {
+  const originalOrder = await Order.findByPk(req.params.orderId)
   const transaction = await sequelizeSession.transaction()
   try {
-    const order = await Order.findByPk(req.params.orderId, { transaction, lock: true })
-    if (order.status) {
-      switch (order.status) {
-        case 'pending':
-          order.startedAt = new Date()
-          order.sentAt = null
-          order.deliveredAt = null
-          break
-        case 'in process':
-          order.sentAt = new Date()
-          order.deliveredAt = null
-          break
-        case 'sent':{
-          order.deliveredAt = new Date()
-          break
-        }
-        case 'delivered':
-          throw new Error('Cannot forward a delivered order')
-      }
+    let price = 0
+    for (const product of req.body.products) {
+      const productDB = await Product.findByPk(product.productId)
+      price += productDB.price * product.quantity
     }
-    const updatedOrder = await order.save({ transaction })
+    req.body.price = price
+    if (price >= 10) {
+      req.body.shippingCosts = 0
+    } else {
+      const restaurant = await Restaurant.findByPk(originalOrder.restaurantId)
+      req.body.shippingCosts = restaurant.shippingCosts
+    }
+    req.body.price += req.body.shippingCosts
+    req.body.updatedAt = new Date()
+
+    await Order.update(
+      req.body,
+      { where: { id: originalOrder.id }, transaction }
+    )
+    let finalOrder = await Order.findByPk(req.params.orderId, { include: 'products' })
+    await finalOrder.setProducts([], transaction)
+    for (const product of req.body.products) {
+      const productDB = await Product.findByPk(product.productId)
+      await finalOrder.addProduct(productDB, { through: { quantity: product.quantity, unityPrice: productDB.price }, transaction })
+    }
     await transaction.commit()
-    res.json(updatedOrder)
+    finalOrder = await Order.findByPk(req.params.orderId, { include: 'products' })
+    res.json(finalOrder.dataValues)
   } catch (err) {
     await transaction.rollback()
     res.status(500).send(err)
   }
 }
-// TODO: [Octubre 2024]
-const backwardOrder = async function (req, res) {
-  const transaction = await sequelizeSession.transaction()
+// TODO: Implement the destroy function that receives an orderId as path param and removes the associated order from the database.
+// Take into account that:
+// 1. The migration include the "ON DELETE CASCADE" directive so
+// OrderProducts related to this order will be automatically removed.
+const destroy = async function (req, res) {
   try {
-    const order = await Order.findByPk(req.params.orderId, { transaction, lock: true })
-    if (order.status) {
-      switch (order.status) {
-        case 'in process':
-          order.startedAt = null
-          order.sentAt = null
-          order.deliveredAt = null
-          break
-        case 'sent':
-          order.sentAt = null
-          order.deliveredAt = null
-          break
-        case 'delivered':{
-          order.deliveredAt = null
-          break
-        }
-        case 'pending':
-          throw new Error('Cannot backward a pending order')
-      }
+    const order = await Order.findByPk(req.params.orderId)
+    let result = 0
+    if (!(order.startedAt || order.deliveredAt || order.sentAt)) {
+      result = await Order.destroy({ where: { id: req.params.orderId } })
     }
-    const updatedOrder = await order.save({ transaction })
-    await transaction.commit()
-    res.json(updatedOrder)
+    let message = ''
+    if (result === 1) {
+      message = 'Successfully deleted order id.' + req.params.orderId
+    } else {
+      message = 'Could not delete order.'
+      res.status(409)
+    }
+    res.json(message)
   } catch (err) {
-    await transaction.rollback()
     res.status(500).send(err)
   }
 }
@@ -315,8 +343,6 @@ const OrderController = {
   send,
   deliver,
   show,
-  analytics,
-  forwardOrder,
-  backwardOrder
+  analytics
 }
 export default OrderController
